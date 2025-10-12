@@ -7,12 +7,16 @@ export const createFeedback = async (feedbackData) => {
 
 // Get feedback by eventId (matches your route: GET /feedbacks/event/:eventId)
 export const getFeedbacksByEvent = async (eventId) => {
-    return await api.get(`feedbacks/event/${eventId}`);
+    const res = await api.get(`feedbacks/event/${eventId}`);
+    if (res && res.status === 404) return [];
+    return res;
 };
 
 // Get feedback by userId (matches your route: GET /feedbacks/user/:userId)
 export const getFeedbacksByUser = async (userId) => {
-    return await api.get(`feedbacks/user/${userId}`);
+    const res = await api.get(`feedbacks/user/${userId}`);
+    if (res && res.status === 404) return [];
+    return res;
 };
 
 // Get single feedback by ID (matches your route: GET /feedbacks/:id)

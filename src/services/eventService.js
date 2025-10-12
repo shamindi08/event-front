@@ -6,12 +6,17 @@ export const createEvent = async (eventData) => {
 
 
 export const getAllEvents = async () => {
-    return await api.get('events/getAllEvents');
+    const res = await api.get('events/getAllEvents');
+    // If normalized 404 returned by interceptor, res.data may be null
+    if (res && res.status === 404) return [];
+    return res;
 };
 
 
 export const getEventById = async (eventId) => {
-    return await api.get(`events/getEventById/${eventId}`);      
+    const res = await api.get(`events/getEventById/${eventId}`);
+    if (res && res.status === 404) return null;
+    return res;
 };
 
 export const updateEvent = async (eventId, eventData) => {
@@ -24,7 +29,9 @@ export const deleteEvent = async (eventId) => {
 
 //get events by userId
 export const getEventsByUserId = async (userId) => {    
-    return await api.get(`events/getEventsByUserId/${userId}`);
+    const res = await api.get(`events/getEventsByUserId/${userId}`);
+    if (res && res.status === 404) return [];
+    return res;
 };
 
 //input cordinates

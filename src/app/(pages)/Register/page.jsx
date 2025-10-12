@@ -16,7 +16,8 @@ export default function Register() {
     confirmPassword: ''
   });
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [errors, setErrors] = useState([]); // array of error messages
+  const [fieldErrors, setFieldErrors] = useState({}); // { email: '...', phone: '...' }
   const [success, setSuccess] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -27,41 +28,43 @@ export default function Register() {
       ...prev,
       [name]: value
     }));
-    if (error) setError('');
-    if (success) setSuccess('');
+  if (errors.length) setErrors([]);
+  if (Object.keys(fieldErrors).length) setFieldErrors({});
+  if (success) setSuccess('');
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     
     // Validation
-    if (!formData.fName.trim() || !formData.lName.trim() || !formData.email.trim() || !formData.phone.trim() || !formData.password || !formData.confirmPassword) {
-      setError('Please fill in all fields');
-      return;
-    }
+      if (!formData.fName.trim() || !formData.lName.trim() || !formData.email.trim() || !formData.phone.trim() || !formData.password || !formData.confirmPassword) {
+        setErrors(['Please fill in all fields']);
+        return;
+      }
 
-    if (!/\S+@\S+\.\S+/.test(formData.email)) {
-      setError('Please enter a valid email address');
-      return;
-    }
+      if (!/\S+@\S+\.\S+/.test(formData.email)) {
+        setErrors(['Please enter a valid email address']);
+        return;
+      }
 
-    if (formData.phone.replace(/\D/g, '').length < 10) {
-      setError('Please enter a valid phone number');
-      return;
-    }
+      if (formData.phone.replace(/\D/g, '').length < 10) {
+        setErrors(['Please enter a valid phone number']);
+        return;
+      }
 
-    if (formData.password.length < 6) {
-      setError('Password must be at least 6 characters long');
-      return;
-    }
+      if (formData.password.length < 6) {
+        setErrors(['Password must be at least 6 characters long']);
+        return;
+      }
 
-    if (formData.password !== formData.confirmPassword) {
-      setError('Passwords do not match');
-      return;
-    }
+      if (formData.password !== formData.confirmPassword) {
+        setErrors(['Passwords do not match']);
+        return;
+      }
 
     setLoading(true);
-    setError('');
+  setErrors([]);
+  setFieldErrors({});
     setSuccess('');
 
     try {
@@ -81,21 +84,75 @@ export default function Register() {
         router.push('/Login');
       }, 2000);
       
-    } catch (error) {
-      let errorMessage = 'Registration failed. Please try again.';
-      
-      if (error.response) {
-        const status = error.response.status;
-        const data = error.response.data;
-        
-        if (data && data.message) {
-          errorMessage = data.message;
-        } else if (status === 409) {
-          errorMessage = 'An account with this email already exists.';
-        }
+    } catch (err) {
+      // Normalize different error shapes from backend / axios interceptor
+      const msgs = [];
+      const fieldErrs = {};
+
+      // axios interceptor may attach a userMessage
+      if (err.userMessage) {
+        msgs.push(err.userMessage);
       }
-      
-      setError(errorMessage);
+
+      // If axios response exists, try to extract structured errors
+      if (err.response && err.response.data) {
+        const data = err.response.data;
+
+        // common: { message: '...' }
+        if (typeof data.message === 'string' && data.message.trim()) {
+          msgs.push(data.message);
+        }
+
+        // sometimes backend returns { error: '...' }
+        if (typeof data.error === 'string' && data.error.trim()) {
+          msgs.push(data.error);
+        }
+
+        // validation errors as array: { errors: ['a','b'] }
+        if (Array.isArray(data.errors) && data.errors.length) {
+          data.errors.forEach(e => {
+            if (typeof e === 'string') msgs.push(e);
+            else if (e && e.msg) msgs.push(e.msg);
+          });
+        }
+
+        // validation errors as object: { errors: { email: 'exists', phone: '...' } }
+        if (data.errors && typeof data.errors === 'object' && !Array.isArray(data.errors)) {
+          Object.entries(data.errors).forEach(([k, v]) => {
+            if (typeof v === 'string') {
+              fieldErrs[k] = v;
+              msgs.push(`${k}: ${v}`);
+            } else if (Array.isArray(v) && v.length) {
+              fieldErrs[k] = v.join(', ');
+              msgs.push(`${k}: ${v.join(', ')}`);
+            }
+          });
+        }
+
+        // some APIs return { validation: { email: '...' } }
+        if (data.validation && typeof data.validation === 'object') {
+          Object.entries(data.validation).forEach(([k, v]) => {
+            if (typeof v === 'string') {
+              fieldErrs[k] = v;
+              msgs.push(`${k}: ${v}`);
+            }
+          });
+        }
+
+        // fallback on status codes
+        if (!msgs.length) {
+          if (err.response.status === 409) msgs.push('An account with this email or phone already exists.');
+          else msgs.push('Registration failed. Please try again.');
+        }
+      } else {
+        // network or unknown error
+        msgs.push(err.userMessage || 'Network error. Please check your connection and try again.');
+      }
+
+      // Deduplicate messages and set state
+      const uniqueMsgs = Array.from(new Set(msgs.filter(Boolean)));
+      setErrors(uniqueMsgs);
+      setFieldErrors(fieldErrs);
     } finally {
       setLoading(false);
     }
@@ -113,10 +170,14 @@ export default function Register() {
           <p className="text-gray-600">Join us today and get started!</p>
         </div>
 
-        {/* Error Message */}
-        {error && (
+        {/* Error Messages (global and field-specific) */}
+        {errors.length > 0 && (
           <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-lg mb-6">
-            <p className="text-sm">{error}</p>
+            <ul className="text-sm list-disc list-inside">
+              {errors.map((msg, idx) => (
+                <li key={idx}>{msg}</li>
+              ))}
+            </ul>
           </div>
         )}
 
@@ -194,6 +255,9 @@ export default function Register() {
                 required
               />
             </div>
+            {fieldErrors.email && (
+              <p className="mt-1 text-sm text-red-600">{fieldErrors.email}</p>
+            )}
           </div>
 
           {/* Phone Field */}
@@ -216,6 +280,9 @@ export default function Register() {
                 required
               />
             </div>
+            {fieldErrors.phone && (
+              <p className="mt-1 text-sm text-red-600">{fieldErrors.phone}</p>
+            )}
           </div>
 
           {/* Password Field */}

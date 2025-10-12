@@ -79,9 +79,16 @@ export default function UserProfile() {
       try {
         // Try to fetch user profile from API
         const response = await getUserProfile(userId);
-        const userData = response.data;
-        console.log('User profile loaded:', userData);
-        
+        // Our service normalizes 404 into null
+        if (!response || (response && response.status === 404) || response === null) {
+          setError('User not found.');
+          setUser(null);
+          setLoading(false);
+          setEventsLoading(false);
+          return;
+        }
+
+        const userData = response.data || response;
         setUser(userData);
         setFormData({
           fName: userData.fName || userData.firstName || '',

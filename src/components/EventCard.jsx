@@ -120,7 +120,19 @@ export default function EventCard({
           
           <div className="flex items-center text-slate-600 text-xs">
             <MdLocationOn className="mr-2 text-indigo-500" />
-            <span className="line-clamp-1">{event.location}</span>
+            {event.locationUrl ? (
+              <a 
+                href={event.locationUrl} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="line-clamp-1 hover:text-indigo-600 hover:underline transition-colors duration-200"
+                onClick={(e) => e.stopPropagation()} // Prevent card click event
+              >
+                {event.location}
+              </a>
+            ) : (
+              <span className="line-clamp-1">{event.location}</span>
+            )}
           </div>
         </div>
 
@@ -132,7 +144,7 @@ export default function EventCard({
                 <div className="flex items-center text-xs">
                   {renderStars(parseFloat(averageRating)).slice(0, 5)}
                 </div>
-                <span className="text-xs text-slate-600">({averageRating})</span>
+                <span className="text-xs text-slate-600">({feedbacks.length})</span>
               </>
             ) : (
               <span className="text-xs text-slate-500">No reviews</span>

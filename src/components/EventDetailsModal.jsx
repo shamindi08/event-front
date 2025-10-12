@@ -17,7 +17,8 @@ export default function EventDetailsModal({
   userFeedback = null,
   isJoined = false,
   showFeedbackButton = false,
-  showJoinButton = false
+  showJoinButton = false,
+  canCancel = true
 }) {
   const [feedbacks, setFeedbacks] = useState([]);
   const [averageRating, setAverageRating] = useState(0);
@@ -37,30 +38,97 @@ export default function EventDetailsModal({
   // Load feedbacks for this event
   useEffect(() => {
     if (isOpen && event) {
-      const loadEventFeedbacks = async () => {
-        try {
-          setLoadingFeedbacks(true);
-          const response = await getFeedbacksByEvent(event._id);
-          const feedbackData = response.data || [];
-          setFeedbacks(feedbackData);
-          
-          // Calculate average rating
-          if (feedbackData.length > 0) {
-            const totalRating = feedbackData.reduce((sum, feedback) => sum + feedback.rating, 0);
-            setAverageRating((totalRating / feedbackData.length).toFixed(1));
-          } else {
-            setAverageRating(0);
-          }
-        } catch (error) {
-          console.error('Error loading feedbacks:', error);
-        } finally {
-          setLoadingFeedbacks(false);
+      console.log('EventDetailsModal - Event data:', event);
+      console.log('EventDetailsModal - Event feedbacks:', event.feedbacks);
+      console.log('EventDetailsModal - Event averageRating:', event.averageRating);
+      
+      // Use existing feedback data if available, otherwise load from API
+      if (event.feedbacks) {
+        console.log('Event has feedbacks property:', event.feedbacks);
+        
+        // Handle different feedback data structures
+        let feedbackArray = [];
+        let avgRating = 0;
+        
+        if (Array.isArray(event.feedbacks)) {
+          // Direct array
+          feedbackArray = event.feedbacks;
+          avgRating = event.averageRating || 0;
+        } else if (event.feedbacks.feedbacks && Array.isArray(event.feedbacks.feedbacks)) {
+          // Response object with feedbacks property
+          feedbackArray = event.feedbacks.feedbacks;
+          avgRating = event.feedbacks.statistics?.averageRating || event.averageRating || 0;
+        } else if (typeof event.feedbacks === 'object' && event.feedbacks.message) {
+          // This is the response object itself
+          feedbackArray = event.feedbacks.feedbacks || [];
+          avgRating = event.feedbacks.statistics?.averageRating || event.averageRating || 0;
         }
-      };
+        
+        console.log('Using existing feedback data, array:', feedbackArray, 'count:', feedbackArray.length);
+        setFeedbacks(feedbackArray);
+        setAverageRating(parseFloat(avgRating) || 0);
+      } else {
+        console.log('Loading feedback data from API');
+        const loadEventFeedbacks = async () => {
+          try {
+            setLoadingFeedbacks(true);
+            const response = await getFeedbacksByEvent(event._id);
+            console.log('API response:', response);
+            
+            // Handle new API response structure
+            let feedbackData = [];
+            let avgRating = 0;
+            
+            if (response.data) {
+              // If response has data property
+              if (response.data.feedbacks && Array.isArray(response.data.feedbacks)) {
+                feedbackData = response.data.feedbacks;
+                avgRating = response.data.statistics?.averageRating || 0;
+              } else if (Array.isArray(response.data)) {
+                feedbackData = response.data;
+              }
+            } else if (response.feedbacks && Array.isArray(response.feedbacks)) {
+              // Direct response structure
+              feedbackData = response.feedbacks;
+              avgRating = response.statistics?.averageRating || 0;
+            } else if (Array.isArray(response)) {
+              // Array response
+              feedbackData = response;
+            }
+            
+            console.log('Processed feedback data:', feedbackData);
+            console.log('Average rating from API:', avgRating);
+            
+            setFeedbacks(feedbackData);
+            
+            // Use average rating from API statistics, or calculate if not available
+            if (avgRating > 0) {
+              setAverageRating(parseFloat(avgRating));
+            } else if (feedbackData.length > 0) {
+              const totalRating = feedbackData.reduce((sum, feedback) => sum + feedback.rating, 0);
+              const calculatedAvg = (totalRating / feedbackData.length).toFixed(1);
+              setAverageRating(parseFloat(calculatedAvg));
+            } else {
+              setAverageRating(0);
+            }
+          } catch (error) {
+            console.error('Error loading feedbacks:', error);
+            setFeedbacks([]);
+            setAverageRating(0);
+          } finally {
+            setLoadingFeedbacks(false);
+          }
+        };
 
-      loadEventFeedbacks();
+        loadEventFeedbacks();
+      }
+    } else {
+      // Reset state when modal is closed or no event
+      setFeedbacks([]);
+      setAverageRating(0);
+      setLoadingFeedbacks(false);
     }
-  }, [isOpen, event]);
+  }, [isOpen, event?._id]); // Also depend on event ID to reset when event changes
 
   // Render star rating
   const renderStars = (rating) => {
@@ -155,7 +223,18 @@ export default function EventDetailsModal({
                 <MdLocationOn className="mr-3 text-indigo-500 text-xl" />
                 <div>
                   <p className="font-semibold">Location</p>
-                  <p className="text-sm">{event.location}</p>
+                  {event.locationUrl ? (
+                    <a 
+                      href={event.locationUrl} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="text-sm hover:text-indigo-600 hover:underline transition-colors duration-200"
+                    >
+                      {event.location}(click here)
+                    </a>
+                  ) : (
+                    <p className="text-sm">{event.location} </p>
+                  )}
                 </div>
               </div>
             </div>
@@ -191,14 +270,15 @@ export default function EventDetailsModal({
               </button>
             </div>
             
+            {console.log('Render - feedbacks state:', feedbacks, 'length:', feedbacks.length)}
             {feedbacks.length > 0 ? (
               <div className="flex items-center space-x-3">
                 <div className="flex items-center">
                   {renderStars(parseFloat(averageRating))}
                 </div>
-                <span className="text-lg font-bold text-slate-700">({averageRating})</span>
+                <span className="text-lg font-bold text-slate-700">{averageRating}</span>
                 <span className="text-sm text-slate-600">
-                  Based on {feedbacks.length} review{feedbacks.length !== 1 ? 's' : ''}
+                  ({feedbacks.length} review{feedbacks.length !== 1 ? 's' : ''})
                 </span>
               </div>
             ) : (
@@ -223,21 +303,52 @@ export default function EventDetailsModal({
                 {/* Join/Cancel Button */}
                 {(showJoinButton || onJoin || onCancel) && !isUserEvent && (
                   <button
-                    onClick={(e) => handleButtonClick(e, () => {
-                      if (isJoined && onCancel) {
-                        onCancel(event._id);
-                      } else if (!isJoined && onJoin) {
-                        onJoin(event._id);
+                    onClick={(e) => {
+                      // Prevent joining ongoing or completed events
+                      if (!isJoined && (event.eventstatus === 'ongoing' || event.eventstatus === 'completed' || event.eventstatus === 'finished')) {
+                        return;
                       }
-                    })}
-                    className={`w-full px-6 py-4 rounded-xl transition-all duration-200 flex items-center justify-center space-x-2 font-semibold shadow-lg hover:shadow-xl transform hover:scale-105 ${
-                      isJoined
-                        ? 'bg-gradient-to-r from-red-100 to-pink-100 text-red-700 hover:from-red-200 hover:to-pink-200 border border-red-200'
-                        : 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:from-indigo-700 hover:to-purple-700'
+                      // Prevent canceling if within 3 hours and user is joined
+                      if (isJoined && !canCancel) {
+                        return;
+                      }
+                      handleButtonClick(e, () => {
+                        if (isJoined && onCancel) {
+                          onCancel(event._id);
+                        } else if (!isJoined && onJoin) {
+                          onJoin(event._id);
+                        }
+                      });
+                    }}
+                    disabled={(!isJoined && (event.eventstatus === 'ongoing' || event.eventstatus === 'completed' || event.eventstatus === 'finished')) || (isJoined && !canCancel)}
+                    className={`w-full px-6 py-4 rounded-xl transition-all duration-200 flex items-center justify-center space-x-2 font-semibold shadow-lg transform ${
+                      (!isJoined && (event.eventstatus === 'ongoing' || event.eventstatus === 'completed' || event.eventstatus === 'finished')) || (isJoined && !canCancel)
+                        ? 'bg-gradient-to-r from-slate-200 to-gray-200 text-slate-500 cursor-not-allowed opacity-60'
+                        : isJoined
+                        ? 'bg-gradient-to-r from-red-100 to-pink-100 text-red-700 hover:from-red-200 hover:to-pink-200 border border-red-200 hover:shadow-xl hover:scale-105'
+                        : 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:from-indigo-700 hover:to-purple-700 hover:shadow-xl hover:scale-105'
                     }`}
                   >
-                    {isJoined ? <MdCancel /> : <MdPeople />}
-                    <span>{isJoined ? 'Cancel Participation' : 'Join Event'}</span>
+                    {(!isJoined && (event.eventstatus === 'ongoing' || event.eventstatus === 'completed' || event.eventstatus === 'finished')) ? (
+                      <>
+                        <MdCancel />
+                        <span>
+                          {event.eventstatus === 'ongoing' ? 'Event Already Started' : 'Event Ended'}
+                        </span>
+                      </>
+                    ) : (isJoined && !canCancel) ? (
+                      <>
+                        <MdCancel />
+                        <span>
+                          {event.eventstatus === 'ongoing' ? 'Cannot Cancel (Event Active)' : 'Cannot Cancel (Within 3 Hours)'}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        {isJoined ? <MdCancel /> : <MdPeople />}
+                        <span>{isJoined ? 'Cancel Participation' : 'Join Event'}</span>
+                      </>
+                    )}
                   </button>
                 )}
 

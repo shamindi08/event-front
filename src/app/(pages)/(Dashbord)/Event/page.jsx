@@ -7,9 +7,11 @@ import FeedbackSubmissionModal from '../../../../components/FeedbackSubmissionMo
 import FeedbackDisplayModal from '../../../../components/FeedbackDisplayModal';
 import EventDetailsModal from '../../../../components/EventDetailsModal';
 import AlertTemplate from '../../../../components/AlertTemplate';
+import Pagination from '../../../../components/Pagination';
 import { useAlert } from '../../../../hooks/useAlert';
+import { usePagination } from '../../../../hooks/usePagination';
 import { createEvent, getAllEvents, deleteEvent, getEventsByUserId, attendEvent, cancelAttendance } from '../../../../services/eventService';
-import { createFeedback, getFeedbacksByUser, updateFeedback } from '../../../../services/feedbackService';
+import { createFeedback, getFeedbacksByUser, updateFeedback, getFeedbacksByEvent } from '../../../../services/feedbackService';
 import { uploadSingleImage, validateFile, getFilePreviewUrl, formatFileSize } from '../../../../services/uploadService';
 
 export default function Events() {
@@ -27,6 +29,7 @@ export default function Events() {
     date: '',
     time: '',
     location: '',
+    locationUrl: '',
     organizer: '',
     image: ''
   });
@@ -98,7 +101,59 @@ export default function Events() {
       const response = await getAllEvents();
       const eventsData = response.data || response;
       console.log('All events loaded:', eventsData);
-      setEvents(Array.isArray(eventsData) ? eventsData : []);
+      
+      if (Array.isArray(eventsData)) {
+        // Load feedbacks for each event
+        const eventsWithFeedbacks = await Promise.all(
+          eventsData.map(async (event) => {
+            try {
+              const feedbackResponse = await getFeedbacksByEvent(event._id);
+              
+              // Handle new API response structure
+              let feedbacks = [];
+              let averageRating = 0;
+              
+              if (feedbackResponse.data) {
+                if (feedbackResponse.data.feedbacks && Array.isArray(feedbackResponse.data.feedbacks)) {
+                  feedbacks = feedbackResponse.data.feedbacks;
+                  averageRating = feedbackResponse.data.statistics?.averageRating || 0;
+                } else if (Array.isArray(feedbackResponse.data)) {
+                  feedbacks = feedbackResponse.data;
+                }
+              } else if (feedbackResponse.feedbacks && Array.isArray(feedbackResponse.feedbacks)) {
+                feedbacks = feedbackResponse.feedbacks;
+                averageRating = feedbackResponse.statistics?.averageRating || 0;
+              } else if (Array.isArray(feedbackResponse)) {
+                feedbacks = feedbackResponse;
+              }
+              
+              // Calculate average rating if not provided by API
+              if (averageRating === 0 && feedbacks.length > 0) {
+                averageRating = (feedbacks.reduce((sum, feedback) => sum + feedback.rating, 0) / feedbacks.length).toFixed(1);
+              }
+              
+              return {
+                ...event,
+                feedbacks,
+                averageRating: parseFloat(averageRating),
+                feedbackCount: feedbacks.length
+              };
+            } catch (error) {
+              console.log('Error loading feedbacks for event:', event._id, error);
+              return {
+                ...event,
+                feedbacks: [],
+                averageRating: 0,
+                feedbackCount: 0
+              };
+            }
+          })
+        );
+        
+        setEvents(eventsWithFeedbacks);
+      } else {
+        setEvents([]);
+      }
     } catch (error) {
       console.error('Error loading events:', error);
       
@@ -247,6 +302,12 @@ const handleFeedbackSubmit = async (feedbackData) => {
       }
     }
     
+    // Close event details modal when opening feedback modal
+    setEventDetailsModal({
+      isOpen: false,
+      event: null
+    });
+    
     setFeedbackModal({
       isOpen: true,
       event: event,
@@ -303,10 +364,69 @@ const handleFeedbackSubmit = async (feedbackData) => {
   // Get separated events
   const { availableEvents, pastEvents } = separateEventsByDate(events);
   const { availableEvents: availableUserEvents, pastEvents: pastUserEvents } = separateEventsByDate(userEvents);
+
+  // Pagination hooks
+  const availableEventsPagination = usePagination(availableEvents, 8);
+  const pastEventsPagination = usePagination(pastEvents, 8);
+  const availableUserEventsPagination = usePagination(availableUserEvents, 6);
+  const pastUserEventsPagination = usePagination(pastUserEvents, 6);
+  const userFeedbacksPagination = usePagination(userFeedbacks, 6);
+
+  // Helper function to check if an event is past
+  const isEventPast = (event) => {
+    if (!event || !event.date) return false;
+    const now = new Date();
+    const eventDate = new Date(event.date);
+    return eventDate < now;
+  };
+
+  // Helper function to check if event registration is within 24 hours
+  const isWithin24Hours = (event) => {
+    if (!event || !event.date || !event.time) return false;
+    const now = new Date();
+    
+    // Combine date and time to get exact event datetime
+    const eventDate = new Date(event.date);
+    const [hours, minutes] = event.time.split(':').map(Number);
+    eventDate.setHours(hours, minutes, 0, 0);
+    
+    // Calculate time difference in milliseconds
+    const timeDifference = eventDate.getTime() - now.getTime();
+    const hoursUntilEvent = timeDifference / (1000 * 60 * 60);
+    
+    // Return true if less than 24 hours until event
+    return hoursUntilEvent > 0 && hoursUntilEvent < 24;
+  };
+
+  // Helper function to check if event cancellation is within 3 hours
+  const isWithin3Hours = (event) => {
+    if (!event || !event.date || !event.time) return false;
+    const now = new Date();
+    
+    // Combine date and time to get exact event datetime
+    const eventDate = new Date(event.date);
+    const [hours, minutes] = event.time.split(':').map(Number);
+    eventDate.setHours(hours, minutes, 0, 0);
+    
+    // Calculate time difference in milliseconds
+    const timeDifference = eventDate.getTime() - now.getTime();
+    const hoursUntilEvent = timeDifference / (1000 * 60 * 60);
+    
+    // Return true if less than 3 hours until event
+    return hoursUntilEvent > 0 && hoursUntilEvent < 3;
+  };
+
   const handleViewFeedbacks = (event) => {
     console.log('handleViewFeedbacks called with event:', event);
     console.log('Event ID:', event?._id);
     console.log('Setting feedbackDisplayModal to open');
+    
+    // Close event details modal when opening feedback display modal
+    setEventDetailsModal({
+      isOpen: false,
+      event: null
+    });
+    
     setFeedbackDisplayModal({
       isOpen: true,
       event: event
@@ -531,6 +651,7 @@ const handleFeedbackSubmit = async (feedbackData) => {
         date: formData.date,
         time: formData.time,
         location: formData.location.trim(),
+        locationUrl: formData.locationUrl.trim(),
         organizer: formData.organizer.trim(),
         image: imageUrl || '',
         userId: userId
@@ -550,6 +671,7 @@ const handleFeedbackSubmit = async (feedbackData) => {
         date: '',
         time: '',
         location: '',
+        locationUrl: '',
         organizer: formData.organizer,
         image: ''
       });
@@ -611,6 +733,24 @@ const handleFeedbackSubmit = async (feedbackData) => {
       return;
     }
 
+    // Check event status to prevent joining ongoing or completed events
+    const event = events.find(e => e._id === eventId);
+    if (event) {
+      if (event.eventstatus === 'ongoing') {
+        showWarning('Cannot join an event that is currently ongoing', 'Event Already Started');
+        return;
+      }
+      if (event.eventstatus === 'completed' || event.eventstatus === 'finished') {
+        showWarning('Cannot join an event that has already ended', 'Event Completed');
+        return;
+      }
+      // Check if registration is within 24 hours of event
+      if (isWithin24Hours(event)) {
+        showWarning('Registration closes 24 hours before the event. You cannot join this event as it is within 24 hours of the start time.', 'Registration Deadline Passed');
+        return;
+      }
+    }
+
     try {
       // Set loading state
       setEventsLoading(true);
@@ -647,6 +787,22 @@ const handleFeedbackSubmit = async (feedbackData) => {
       if (!userId) {
         showWarning('Please log in to cancel event participation', 'Authentication Required');
         return;
+      }
+
+      // Check if cancellation is within 3 hours of event
+      const eventToCancel = events.find(e => e._id === eventId);
+      if (eventToCancel) {
+        // Check if event is ongoing
+        if (eventToCancel.eventstatus === 'ongoing') {
+          showWarning('You cannot cancel your participation while the event is ongoing.', 'Event Currently Active');
+          return;
+        }
+        
+        // Check if cancellation is within 3 hours of event
+        if (isWithin3Hours(eventToCancel)) {
+          showWarning('You cannot cancel your participation within 3 hours of the event start time.', 'Cancellation Deadline Passed');
+          return;
+        }
       }
 
       // Set loading state
@@ -792,6 +948,15 @@ const handleFeedbackSubmit = async (feedbackData) => {
                 onChange={handleInputChange}
                 className="input-field"
                 required
+              />
+              
+              <input
+                type="url"
+                name="locationUrl"
+                placeholder="Location URL (optional) - e.g., Google Maps link"
+                value={formData.locationUrl}
+                onChange={handleInputChange}
+                className="input-field"
               />
               
               <input
@@ -967,7 +1132,7 @@ const handleFeedbackSubmit = async (feedbackData) => {
                       Upcoming Events ({availableUserEvents.length})
                     </h4>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                      {availableUserEvents.map((event) => (
+                      {availableUserEventsPagination.currentData.map((event) => (
                         <EventCard 
                           key={event._id} 
                           event={event} 
@@ -979,6 +1144,16 @@ const handleFeedbackSubmit = async (feedbackData) => {
                         />
                       ))}
                     </div>
+                    
+                    {/* Pagination for Available User Events */}
+                    <Pagination
+                      currentPage={availableUserEventsPagination.currentPage}
+                      totalPages={availableUserEventsPagination.totalPages}
+                      totalItems={availableUserEventsPagination.totalItems}
+                      itemsPerPage={availableUserEventsPagination.itemsPerPage}
+                      onPageChange={availableUserEventsPagination.handlePageChange}
+                      size="small"
+                    />
                   </div>
                 )}
 
@@ -990,7 +1165,7 @@ const handleFeedbackSubmit = async (feedbackData) => {
                       Past Events ({pastUserEvents.length})
                     </h4>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                      {pastUserEvents.map((event) => (
+                      {pastUserEventsPagination.currentData.map((event) => (
                         <EventCard 
                           key={event._id} 
                           event={event} 
@@ -1002,6 +1177,16 @@ const handleFeedbackSubmit = async (feedbackData) => {
                         />
                       ))}
                     </div>
+                    
+                    {/* Pagination for Past User Events */}
+                    <Pagination
+                      currentPage={pastUserEventsPagination.currentPage}
+                      totalPages={pastUserEventsPagination.totalPages}
+                      totalItems={pastUserEventsPagination.totalItems}
+                      itemsPerPage={pastUserEventsPagination.itemsPerPage}
+                      onPageChange={pastUserEventsPagination.handlePageChange}
+                      size="small"
+                    />
                   </div>
                 )}
 
@@ -1082,7 +1267,7 @@ const handleFeedbackSubmit = async (feedbackData) => {
                       Available Events ({availableEvents.length})
                     </h4>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                      {availableEvents.map((event) => (
+                      {availableEventsPagination.currentData.map((event) => (
                         <EventCard 
                           key={event._id} 
                           event={event}
@@ -1096,6 +1281,16 @@ const handleFeedbackSubmit = async (feedbackData) => {
                         />
                       ))}
                     </div>
+                    
+                    {/* Pagination for Available Events */}
+                    <Pagination
+                      currentPage={availableEventsPagination.currentPage}
+                      totalPages={availableEventsPagination.totalPages}
+                      totalItems={availableEventsPagination.totalItems}
+                      itemsPerPage={availableEventsPagination.itemsPerPage}
+                      onPageChange={availableEventsPagination.handlePageChange}
+                      size="small"
+                    />
                   </div>
                 )}
 
@@ -1107,7 +1302,7 @@ const handleFeedbackSubmit = async (feedbackData) => {
                       Past Events ({pastEvents.length})
                     </h4>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                      {pastEvents.map((event) => (
+                      {pastEventsPagination.currentData.map((event) => (
                         <EventCard 
                           key={event._id} 
                           event={event}
@@ -1121,6 +1316,16 @@ const handleFeedbackSubmit = async (feedbackData) => {
                         />
                       ))}
                     </div>
+                    
+                    {/* Pagination for Past Events */}
+                    <Pagination
+                      currentPage={pastEventsPagination.currentPage}
+                      totalPages={pastEventsPagination.totalPages}
+                      totalItems={pastEventsPagination.totalItems}
+                      itemsPerPage={pastEventsPagination.itemsPerPage}
+                      onPageChange={pastEventsPagination.handlePageChange}
+                      size="small"
+                    />
                   </div>
                 )}
 
@@ -1169,7 +1374,7 @@ const handleFeedbackSubmit = async (feedbackData) => {
             ) : (
               <div className="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 p-8">
                 <div className="space-y-6">
-                  {userFeedbacks.map((feedback) => (
+                  {userFeedbacksPagination.currentData.map((feedback) => (
                     <div key={feedback._id} className="border border-slate-200 rounded-xl p-6 hover:shadow-lg transition-all duration-200 hover:border-indigo-200">
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
@@ -1230,6 +1435,16 @@ const handleFeedbackSubmit = async (feedbackData) => {
                   </div>
                 ))}
                 </div>
+                
+                {/* Pagination for User Feedbacks */}
+                <Pagination
+                  currentPage={userFeedbacksPagination.currentPage}
+                  totalPages={userFeedbacksPagination.totalPages}
+                  totalItems={userFeedbacksPagination.totalItems}
+                  itemsPerPage={userFeedbacksPagination.itemsPerPage}
+                  onPageChange={userFeedbacksPagination.handlePageChange}
+                  size="small"
+                />
               </div>
             )}
           </div>
@@ -1262,9 +1477,10 @@ const handleFeedbackSubmit = async (feedbackData) => {
         onFeedback={handleOpenFeedback}
         onViewFeedbacks={handleViewFeedbacks}
         showActions={true}
-        showJoinButton={true}
+        showJoinButton={eventDetailsModal.event ? (!isEventPast(eventDetailsModal.event) && !isWithin24Hours(eventDetailsModal.event)) : true}
         currentUserId={currentUserId}
         isJoined={eventDetailsModal.event ? userJoinedEvents.has(eventDetailsModal.event._id) : false}
+        canCancel={eventDetailsModal.event ? (!isWithin3Hours(eventDetailsModal.event) && eventDetailsModal.event.eventstatus !== 'ongoing') : true}
       />
 
       {/* Alert Template */}

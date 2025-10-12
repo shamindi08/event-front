@@ -7,7 +7,9 @@ import EventDetailsModal from '../../../../components/EventDetailsModal';
 import FeedbackSubmissionModal from '../../../../components/FeedbackSubmissionModal';
 import FeedbackDisplayModal from '../../../../components/FeedbackDisplayModal';
 import AlertTemplate from '../../../../components/AlertTemplate';
+import Pagination from '../../../../components/Pagination';
 import { useAlert } from '../../../../hooks/useAlert';
+import { usePagination } from '../../../../hooks/usePagination';
 import { getAllEvents, attendEvent, cancelAttendance } from '../../../../services/eventService';
 import { createFeedback, getFeedbacksByUser, updateFeedback, getFeedbacksByEvent } from '../../../../services/feedbackService';
 
@@ -75,12 +77,36 @@ export default function Home() {
           eventsData.map(async (event) => {
             try {
               const feedbackResponse = await getFeedbacksByEvent(event._id);
-              const feedbacks = (feedbackResponse.data || feedbackResponse) || [];
               
-              // Calculate average rating
-              const averageRating = feedbacks.length > 0 
-                ? (feedbacks.reduce((sum, feedback) => sum + feedback.rating, 0) / feedbacks.length).toFixed(1)
-                : 0;
+              // Handle new API response structure
+              let feedbacks = [];
+              let averageRating = 0;
+              
+              if (feedbackResponse.data) {
+                if (feedbackResponse.data.feedbacks && Array.isArray(feedbackResponse.data.feedbacks)) {
+                  feedbacks = feedbackResponse.data.feedbacks;
+                  averageRating = feedbackResponse.data.statistics?.averageRating || 0;
+                } else if (Array.isArray(feedbackResponse.data)) {
+                  feedbacks = feedbackResponse.data;
+                }
+              } else if (feedbackResponse.feedbacks && Array.isArray(feedbackResponse.feedbacks)) {
+                feedbacks = feedbackResponse.feedbacks;
+                averageRating = feedbackResponse.statistics?.averageRating || 0;
+              } else if (Array.isArray(feedbackResponse)) {
+                feedbacks = feedbackResponse;
+              }
+              
+              // Calculate average rating if not provided by API
+              if (averageRating === 0 && feedbacks.length > 0) {
+                averageRating = (feedbacks.reduce((sum, feedback) => sum + feedback.rating, 0) / feedbacks.length).toFixed(1);
+              }
+              
+              console.log('Event feedbacks processed:', {
+                eventId: event._id,
+                feedbacks: feedbacks,
+                feedbacksCount: feedbacks.length,
+                averageRating: averageRating
+              });
               
               return {
                 ...event,
@@ -89,6 +115,7 @@ export default function Home() {
                 feedbackCount: feedbacks.length
               };
             } catch (error) {
+              console.log('Error loading feedbacks for event:', event._id, error);
               return {
                 ...event,
                 feedbacks: [],
@@ -99,6 +126,7 @@ export default function Home() {
           })
         );
         
+        console.log('Events with feedback data loaded:', eventsWithFeedbacks);
         setEvents(eventsWithFeedbacks);
       } else {
         setEvents([]);
@@ -186,6 +214,12 @@ export default function Home() {
 
   // Open feedback modal
   const handleOpenFeedback = (event, existingFeedback = null) => {
+    // Close event details modal when opening feedback modal
+    setEventDetailsModal({
+      isOpen: false,
+      event: null
+    });
+    
     setFeedbackModal({
       isOpen: true,
       event: event,
@@ -204,6 +238,12 @@ export default function Home() {
 
   // Handle viewing feedbacks
   const handleViewFeedbacks = (event) => {
+    // Close event details modal when opening feedback display modal
+    setEventDetailsModal({
+      isOpen: false,
+      event: null
+    });
+    
     setFeedbackDisplayModal({
       isOpen: true,
       event: event
@@ -233,6 +273,11 @@ export default function Home() {
 
   // Handle event card click to open details modal
   const handleEventClick = (event) => {
+    console.log('handleEventClick - Event object:', event);
+    console.log('handleEventClick - Event feedbacks:', event.feedbacks);
+    console.log('handleEventClick - Event feedbackCount:', event.feedbackCount);
+    console.log('handleEventClick - Event averageRating:', event.averageRating);
+    
     setEventDetailsModal({
       isOpen: true,
       event: event
@@ -263,6 +308,59 @@ export default function Home() {
 
   const { availableEvents, pastEvents } = separateEvents(events);
 
+  // Pagination for available events
+  const availableEventsPagination = usePagination(availableEvents, 8);
+  
+  // Pagination for past events
+  const pastEventsPagination = usePagination(pastEvents, 8);
+  
+  // Pagination for user feedbacks
+  const feedbacksPagination = usePagination(userFeedbacks, 5);
+
+  // Helper function to check if an event is past
+  const isEventPast = (event) => {
+    if (!event || !event.date) return false;
+    const now = new Date();
+    const eventDate = new Date(event.date);
+    return eventDate < now;
+  };
+
+  // Helper function to check if event registration is within 24 hours
+  const isWithin24Hours = (event) => {
+    if (!event || !event.date || !event.time) return false;
+    const now = new Date();
+    
+    // Combine date and time to get exact event datetime
+    const eventDate = new Date(event.date);
+    const [hours, minutes] = event.time.split(':').map(Number);
+    eventDate.setHours(hours, minutes, 0, 0);
+    
+    // Calculate time difference in milliseconds
+    const timeDifference = eventDate.getTime() - now.getTime();
+    const hoursUntilEvent = timeDifference / (1000 * 60 * 60);
+    
+    // Return true if less than 24 hours until event
+    return hoursUntilEvent > 0 && hoursUntilEvent < 24;
+  };
+
+  // Helper function to check if event cancellation is within 3 hours
+  const isWithin3Hours = (event) => {
+    if (!event || !event.date || !event.time) return false;
+    const now = new Date();
+    
+    // Combine date and time to get exact event datetime
+    const eventDate = new Date(event.date);
+    const [hours, minutes] = event.time.split(':').map(Number);
+    eventDate.setHours(hours, minutes, 0, 0);
+    
+    // Calculate time difference in milliseconds
+    const timeDifference = eventDate.getTime() - now.getTime();
+    const hoursUntilEvent = timeDifference / (1000 * 60 * 60);
+    
+    // Return true if less than 3 hours until event
+    return hoursUntilEvent > 0 && hoursUntilEvent < 3;
+  };
+
  const handleJoinEvent = async (eventId) => {
   const userId = localStorage.getItem('userId');
   if (!userId) {
@@ -273,6 +371,24 @@ export default function Home() {
   if (userJoinedEvents.has(eventId)) {
     showInfo('You have already joined this event', 'Already Registered');
     return;
+  }
+
+  // Check event status to prevent joining ongoing or completed events
+  const event = events.find(e => e._id === eventId);
+  if (event) {
+    if (event.eventstatus === 'ongoing') {
+      showWarning('Cannot join an event that is currently ongoing', 'Event Already Started');
+      return;
+    }
+    if (event.eventstatus === 'completed' || event.eventstatus === 'finished') {
+      showWarning('Cannot join an event that has already ended', 'Event Completed');
+      return;
+    }
+    // Check if registration is within 24 hours of event
+    if (isWithin24Hours(event)) {
+      showWarning('Registration closes 24 hours before the event. You cannot join this event as it is within 24 hours of the start time.', 'Registration Deadline Passed');
+      return;
+    }
   }
 
   try {
@@ -309,6 +425,22 @@ export default function Home() {
       if (!userId) {
         showWarning('Please log in to cancel event participation', 'Authentication Required');
         return;
+      }
+
+      // Check if cancellation is within 3 hours of event
+      const eventToCancel = events.find(e => e._id === eventId);
+      if (eventToCancel) {
+        // Check if event is ongoing
+        if (eventToCancel.eventstatus === 'ongoing') {
+          showWarning('You cannot cancel your participation while the event is ongoing.', 'Event Currently Active');
+          return;
+        }
+        
+        // Check if cancellation is within 3 hours of event
+        if (isWithin3Hours(eventToCancel)) {
+          showWarning('You cannot cancel your participation within 3 hours of the event start time.', 'Cancellation Deadline Passed');
+          return;
+        }
       }
 
       // Set loading state
@@ -470,7 +602,7 @@ export default function Home() {
                   Available Events ({availableEvents.length})
                 </h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                  {availableEvents.map((event) => (
+                  {availableEventsPagination.currentData.map((event) => (
                     <EventCard 
                       key={event._id} 
                       event={event} 
@@ -487,6 +619,16 @@ export default function Home() {
                     />
                   ))}
                 </div>
+                
+                {/* Pagination for Available Events */}
+                <Pagination
+                  currentPage={availableEventsPagination.currentPage}
+                  totalPages={availableEventsPagination.totalPages}
+                  totalItems={availableEventsPagination.totalItems}
+                  itemsPerPage={availableEventsPagination.itemsPerPage}
+                  onPageChange={availableEventsPagination.handlePageChange}
+                  size="medium"
+                />
               </div>
             )}
 
@@ -498,7 +640,7 @@ export default function Home() {
                   Past Events ({pastEvents.length})
                 </h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                  {pastEvents.map((event) => (
+                  {pastEventsPagination.currentData.map((event) => (
                     <EventCard 
                       key={event._id} 
                       event={event} 
@@ -511,10 +653,20 @@ export default function Home() {
                       userFeedback={getUserFeedbackForEvent(event._id)}
                       isJoined={userJoinedEvents.has(event._id)}
                       showFeedbackButton={true}
-                      showJoinButton={true}
+                      showJoinButton={false}
                     />
                   ))}
                 </div>
+                
+                {/* Pagination for Past Events */}
+                <Pagination
+                  currentPage={pastEventsPagination.currentPage}
+                  totalPages={pastEventsPagination.totalPages}
+                  totalItems={pastEventsPagination.totalItems}
+                  itemsPerPage={pastEventsPagination.itemsPerPage}
+                  onPageChange={pastEventsPagination.handlePageChange}
+                  size="medium"
+                />
               </div>
             )}
           </>
@@ -625,7 +777,8 @@ export default function Home() {
         userFeedback={eventDetailsModal.event ? getUserFeedbackForEvent(eventDetailsModal.event._id) : null}
         isJoined={eventDetailsModal.event ? userJoinedEvents.has(eventDetailsModal.event._id) : false}
         showFeedbackButton={true}
-        showJoinButton={true}
+        showJoinButton={eventDetailsModal.event ? (!isEventPast(eventDetailsModal.event) && !isWithin24Hours(eventDetailsModal.event)) : true}
+        canCancel={eventDetailsModal.event ? (!isWithin3Hours(eventDetailsModal.event) && eventDetailsModal.event.eventstatus !== 'ongoing') : true}
       />
 
       {/* Alert Template */}
